@@ -7,13 +7,9 @@ import connectDB from "./config/db.js";
 import deviceRoutes from "./routes/device.routes.js";
 import sensorRoutes from "./routes/sensor.routes.js";
 import alertRoutes from "./routes/alert.routes.js";
-import { initializeSocket, emitAlert } from "./sockets/realtime.socket.js";
+import { initializeSocket } from "./sockets/realtime.socket.js";
 import { connectMQTT, disconnectMQTT } from "./config/mqtt.js";
 import { saveSensorData, flushAllBatches } from "./services/ingestion.service.js";
-import { calculateHealthScore } from "./services/prediction.service.js";
-import Device from "./models/Device.model.js";
-import Alert from "./models/Alert.model.js";
-import SensorData from "./models/SensorData.model.js";
 
 const PORT = process.env.PORT || 3000;
 
@@ -152,143 +148,7 @@ const startServer = async () => {
         }`
       );
       console.log("\n✓ Backend ready to receive MQTT + REST + WebSockets\n");
-
-      // Periodic job: Update health scores every 10 seconds
-      setInterval(async () => {
-        try {
-          const devices = await Device.find().select('deviceId');
-          for (const device of devices) {
-            const { healthScore, failureRisk } = await calculateHealthScore(device.deviceId);
-            await Device.updateOne(
-              { deviceId: device.deviceId },
-              {
-                healthScore,
-                failureRisk,
-                lastUpdate: new Date(),
-              }
-            );
-          }
-        } catch (error) {
-          console.error('✗ Error updating device health scores:', error.message);
-        }
-      }, 10000); // Every 10 seconds
-
-      // Periodic job: Check for alerts every 10 seconds
-      setInterval(async () => {
-        try {
-          const devices = await Device.find().select('deviceId healthScore');
-          
-          for (const device of devices) {
-            // Get latest sensor data for this device
-            const latestSensor = await SensorData.findOne({ deviceId: device.deviceId })
-              .sort({ timestamp: -1 })
-              .exec();
-            
-            if (!latestSensor) continue;
-
-            const alerts = [];
-            
-            // Check temperature threshold (> 85°C)
-            if (latestSensor.temperature > 85) {
-              alerts.push({
-                deviceId: device.deviceId,
-                type: 'TEMPERATURE_HIGH',
-                severity: 'CRITICAL',
-                triggerType: 'TEMPERATURE',
-                value: latestSensor.temperature,
-                threshold: 85,
-                message: `Temperature critically high: ${latestSensor.temperature.toFixed(1)}°C`,
-                reason: 'Operating temperature exceeded critical threshold of 85°C',
-              });
-            }
-            
-            // Check vibration threshold (> 40 on 0-100 scale)
-            if (latestSensor.vibration > 40) {
-              alerts.push({
-                deviceId: device.deviceId,
-                type: 'VIBRATION_HIGH',
-                severity: latestSensor.vibration > 60 ? 'CRITICAL' : 'WARNING',
-                triggerType: 'VIBRATION',
-                value: latestSensor.vibration,
-                threshold: 40,
-                message: `Vibration elevated: ${latestSensor.vibration.toFixed(1)}`,
-                reason: 'Vibration levels exceed acceptable operating range',
-              });
-            }
-            
-            // Check pressure threshold (> 40 bar)
-            if (latestSensor.pressure > 40) {
-              alerts.push({
-                deviceId: device.deviceId,
-                type: 'PRESSURE_HIGH',
-                severity: 'WARNING',
-                triggerType: 'PRESSURE',
-                value: latestSensor.pressure,
-                threshold: 40,
-                message: `Pressure high: ${latestSensor.pressure.toFixed(1)} bar`,
-                reason: 'Pressure levels exceed acceptable operating range',
-              });
-            }
-            
-            // Check health score (< 60 = HIGH risk, < 70 = MEDIUM risk)
-            const healthScore = device.healthScore || 100;
-            if (healthScore < 60) {
-              alerts.push({
-                deviceId: device.deviceId,
-                type: 'HEALTH_CRITICAL',
-                severity: 'CRITICAL',
-                triggerType: 'HEALTH_SCORE',
-                value: healthScore,
-                threshold: 60,
-                message: `Device health critical: ${healthScore.toFixed(1)}%`,
-                reason: 'Device health score indicates imminent failure risk',
-              });
-            } else if (healthScore < 70) {
-              alerts.push({
-                deviceId: device.deviceId,
-                type: 'HEALTH_DEGRADED',
-                severity: 'WARNING',
-                triggerType: 'HEALTH_SCORE',
-                value: healthScore,
-                threshold: 70,
-                message: `Device health degraded: ${healthScore.toFixed(1)}%`,
-                reason: 'Device health score indicates degraded performance',
-              });
-            }
-            
-            // Save and emit alerts
-            for (const alertData of alerts) {
-              try {
-                const alert = new Alert({
-                  deviceId: alertData.deviceId,
-                  severity: alertData.severity,
-                  triggerType: alertData.triggerType,
-                  message: alertData.message,
-                  reason: alertData.reason,
-                  sensorReadings: {
-                    temperature: latestSensor.temperature,
-                    vibration: latestSensor.vibration,
-                    pressure: latestSensor.pressure,
-                  },
-                  timestamp: new Date(),
-                  status: 'ACTIVE',
-                  acknowledged: false,
-                });
-                await alert.save();
-                
-                // Emit to frontend via WebSocket
-                emitAlert(alert);
-                
-                console.log(`🚨 [ALERT] ${alertData.message}`);
-              } catch (alertError) {
-                console.error(`✗ Error saving alert:`, alertError.message);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('✗ Error checking alerts:', error.message);
-        }
-      }, 10000); // Every 10 seconds
+      console.log("✓ Mathematical health prediction enabled (3-min intervals)\n");
     });
   } catch (error) {
     console.error("✗ Failed to start server:", error.message);

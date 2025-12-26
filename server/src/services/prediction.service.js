@@ -1,206 +1,247 @@
-// Device health prediction and analysis
-import { analyzeDeviceHealth } from '../config/openai.js';
+// Mathematical health prediction service (formula-based, no AI)
 import Device from '../models/Device.model.js';
 import SensorData from '../models/SensorData.model.js';
-import {
-  isPredictionCacheValid,
-  getCachedPrediction,
-  cachePrediction,
-  getRecentSensorData,
-  calculateAggregateStats,
-} from './ingestion.service.js';
 
-// Rule-based health score calculation (without AI)
-export const calculateHealthScore = async (deviceId) => {
+// ==================== HEALTH SCORING FORMULA ====================
+// Health Score = (T_Health × 0.30) + (V_Health × 0.35) + (P_Health × 0.35)
+// Each component is weighted and calculated from sensor readings
+// ================================================================
+
+// Calculate temperature component health (0-100)
+const calculateTemperatureHealth = (readings) => {
+  if (!readings || readings.length === 0) return 100;
+
+  const temps = readings.map(r => r.temperature);
+  const avg = temps.reduce((a, b) => a + b, 0) / temps.length;
+  const stdDev = Math.sqrt(temps.reduce((sq, n) => sq + Math.pow(n - avg, 2), 0) / temps.length);
+
+  let score = 100;
+
+  // Penalty for deviation from ideal range (60-80°C)
+  const lowerBound = 60, upperBound = 80;
+  if (avg < lowerBound) {
+    score -= Math.abs(avg - lowerBound) * 1.5;
+  } else if (avg > upperBound) {
+    score -= (avg - upperBound) * 2.5;
+  }
+
+  // Penalty for high variance (std dev > 5 indicates instability)
+  if (stdDev > 5) {
+    score -= Math.min(stdDev * 2, 20);
+  }
+
+  // Penalty for upward trend (last 3 vs first 3)
+  if (readings.length >= 3) {
+    const first3Avg = (readings[0].temperature + readings[1].temperature + readings[2].temperature) / 3;
+    const last3Avg = (readings[readings.length - 3].temperature + readings[readings.length - 2].temperature + readings[readings.length - 1].temperature) / 3;
+    const trend = last3Avg - first3Avg;
+    if (trend > 3) score -= Math.min(trend, 15);
+  }
+
+  return Math.max(0, Math.min(100, score));
+};
+
+// Calculate vibration component health (0-100)
+const calculateVibrationHealth = (readings) => {
+  if (!readings || readings.length === 0) return 100;
+
+  const vibrations = readings.map(r => r.vibration);
+  const avg = vibrations.reduce((a, b) => a + b, 0) / vibrations.length;
+  const max = Math.max(...vibrations);
+  const stdDev = Math.sqrt(vibrations.reduce((sq, n) => sq + Math.pow(n - avg, 2), 0) / vibrations.length);
+
+  let score = 100;
+
+  // Penalty for high average vibration (ideal: < 0.3)
+  if (avg > 0.3) {
+    score -= (avg - 0.3) * 50;
+  }
+
+  // Penalty for vibration spikes (max > 0.5 is dangerous)
+  if (max > 0.5) {
+    score -= (max - 0.5) * 40;
+  }
+
+  // Penalty for high variance (indicates instability)
+  if (stdDev > 0.15) {
+    score -= Math.min(stdDev * 30, 25);
+  }
+
+  // Penalty for upward trend (increasing vibration = deterioration)
+  if (readings.length >= 3) {
+    const first3Avg = (readings[0].vibration + readings[1].vibration + readings[2].vibration) / 3;
+    const last3Avg = (readings[readings.length - 3].vibration + readings[readings.length - 2].vibration + readings[readings.length - 1].vibration) / 3;
+    const trend = last3Avg - first3Avg;
+    if (trend > 0.05) score -= Math.min(trend * 40, 20);
+  }
+
+  return Math.max(0, Math.min(100, score));
+};
+
+// Calculate pressure component health (0-100)
+const calculatePressureHealth = (readings) => {
+  if (!readings || readings.length === 0) return 100;
+
+  const pressures = readings.map(r => r.pressure);
+  const avg = pressures.reduce((a, b) => a + b, 0) / pressures.length;
+  const max = Math.max(...pressures);
+  const stdDev = Math.sqrt(pressures.reduce((sq, n) => sq + Math.pow(n - avg, 2), 0) / pressures.length);
+
+  let score = 100;
+
+  // Penalty for deviation from ideal range (30-40 bar)
+  const lowerBound = 30, upperBound = 40;
+  if (avg < lowerBound) {
+    score -= Math.abs(avg - lowerBound) * 2;
+  } else if (avg > upperBound) {
+    score -= (avg - upperBound) * 3;
+  }
+
+  // Penalty for pressure spikes (max > 50 is critical)
+  if (max > 50) {
+    score -= (max - 50) * 2;
+  }
+
+  // Penalty for high variance (std dev > 3 indicates instability)
+  if (stdDev > 3) {
+    score -= Math.min(stdDev * 3, 20);
+  }
+
+  // Penalty for upward trend (increasing pressure = leak/blockage)
+  if (readings.length >= 3) {
+    const first3Avg = (pressures[0] + pressures[1] + pressures[2]) / 3;
+    const last3Avg = (pressures[pressures.length - 3] + pressures[pressures.length - 2] + pressures[pressures.length - 1]) / 3;
+    const trend = last3Avg - first3Avg;
+    if (trend > 2) score -= Math.min(trend * 2, 15);
+  }
+
+  return Math.max(0, Math.min(100, score));
+};
+
+// Main health score calculation using weighted formula
+export const calculateHealthScoreFormula = (readings) => {
+  if (!readings || readings.length === 0) {
+    return { healthScore: 100, failureRisk: 'LOW', status: 'STABLE' };
+  }
+
+  const tempHealth = calculateTemperatureHealth(readings);
+  const vibHealth = calculateVibrationHealth(readings);
+  const pressHealth = calculatePressureHealth(readings);
+
+  // Weighted formula: T(30%) + V(35%) + P(35%)
+  const healthScore = Math.round(
+    (tempHealth * 0.30) + (vibHealth * 0.35) + (pressHealth * 0.35)
+  );
+
+  // Determine failure risk & status based on thresholds
+  let failureRisk = 'LOW';
+  let status = 'STABLE';
+
+  if (healthScore < 30) {
+    failureRisk = 'HIGH';
+    status = 'CRITICAL';
+  } else if (healthScore < 50) {
+    failureRisk = 'HIGH';
+    status = 'DEGRADING';
+  } else if (healthScore < 70) {
+    failureRisk = 'MEDIUM';
+    status = 'DEGRADING';
+  } else {
+    failureRisk = 'LOW';
+    status = 'STABLE';
+  }
+
+  return {
+    healthScore,
+    failureRisk,
+    status,
+    componentScores: {
+      temperature: tempHealth,
+      vibration: vibHealth,
+      pressure: pressHealth,
+    },
+  };
+};
+
+// Generate health prediction for a device
+export const generateHealthPrediction = (readings) => {
   try {
-    const recentData = await getRecentSensorData(deviceId, 10);
-    
-    if (!recentData || recentData.length === 0) {
-      return { healthScore: 100, failureRisk: 'LOW' };
+    if (!readings || readings.length === 0) {
+      return {
+        healthScore: 100,
+        failureRisk: 'LOW',
+        status: 'STABLE',
+        reason: 'Insufficient data',
+      };
     }
 
-    const stats = await calculateAggregateStats(deviceId, 10);
-    
-    let healthScore = 100;
-    let failureRisk = 'LOW';
+    const prediction = calculateHealthScoreFormula(readings);
 
-    // Penalize high temperature (ideal: 70-80°C)
-    if (stats.avgTemperature > 85) healthScore -= (stats.avgTemperature - 85) * 2;
-    if (stats.maxTemperature > 95) healthScore -= 20;
+    // Generate reason based on component scores
+    let reason = '';
+    const components = prediction.componentScores;
 
-    // Penalize high vibration (ideal: < 30 in 0-100 scale)
-    if (stats.avgVibration > 40) healthScore -= (stats.avgVibration - 40) * 0.5;
-    if (stats.maxVibration > 50) healthScore -= 25;
+    if (components.temperature < 60) {
+      reason += 'Temperature critical. ';
+    } else if (components.temperature < 70) {
+      reason += 'Temperature concerns. ';
+    }
 
-    // Penalize high pressure (ideal: 30-35)
-    if (stats.avgPressure > 40) healthScore -= (stats.avgPressure - 40) * 2;
-    if (stats.maxPressure > 45) healthScore -= 15;
+    if (components.vibration < 60) {
+      reason += 'High vibration levels. ';
+    } else if (components.vibration < 70) {
+      reason += 'Vibration rising. ';
+    }
 
-    // Determine failure risk based on health score
-    healthScore = Math.max(0, Math.min(100, healthScore));
-    
-    if (healthScore < 50) failureRisk = 'HIGH';
-    else if (healthScore < 70) failureRisk = 'MEDIUM';
-    else failureRisk = 'LOW';
+    if (components.pressure < 60) {
+      reason += 'Pressure instability. ';
+    } else if (components.pressure < 70) {
+      reason += 'Pressure fluctuations. ';
+    }
 
-    return { healthScore, failureRisk };
+    if (!reason) {
+      reason = 'All metrics within normal range. System operating optimally.';
+    }
+
+    return {
+      healthScore: prediction.healthScore,
+      failureRisk: prediction.failureRisk,
+      status: prediction.status,
+      reason: reason.trim(),
+      componentScores: components,
+    };
   } catch (error) {
-    console.error(`✗ Health calculation error for ${deviceId}:`, error.message);
-    return { healthScore: 100, failureRisk: 'LOW' };
+    console.error(`✗ Prediction error:`, error.message);
+    return {
+      healthScore: 100,
+      failureRisk: 'LOW',
+      status: 'STABLE',
+      reason: 'Prediction calculation error',
+    };
   }
 };
 
-export const generateHealthPrediction = async (deviceId) => {
+// Update device health in database
+export const updateDeviceHealth = async (deviceId, prediction) => {
   try {
-    if (isPredictionCacheValid(deviceId)) {
-      console.log(`✓ Using cached prediction for ${deviceId}`);
-      return getCachedPrediction(deviceId);
-    }
-
-
-    const recentData = await getRecentSensorData(deviceId, 15);
-
-    if (!recentData || recentData.length === 0) {
-      console.warn(`⚠ No recent sensor data for ${deviceId}`);
-      return null;
-    }
-
-    // Calculate aggregate statistics
-    const stats = await calculateAggregateStats(deviceId, 15);
-
-    // Prepare data for AI analysis
-    const analysisData = {
-      deviceId,
-      avgTemperature: stats?.avgTemperature || 0,
-      maxTemperature: stats?.maxTemperature || 0,
-      minTemperature: stats?.minTemperature || 0,
-      avgVibration: stats?.avgVibration || 0,
-      maxVibration: stats?.maxVibration || 0,
-      minVibration: stats?.minVibration || 0,
-      avgPressure: stats?.avgPressure || 0,
-      maxPressure: stats?.maxPressure || 0,
-      minPressure: stats?.minPressure || 0,
-      sampleCount: stats?.sampleCount || 0,
-      recentReadings: recentData.slice(0, 5).map((d) => ({
-        temperature: d.temperature,
-        vibration: d.vibration,
-        pressure: d.pressure,
-        timestamp: d.timestamp,
-      })),
-    };
-
-    // Get AI analysis
-    const analysis = await analyzeDeviceHealth(analysisData);
-
-    // Cache the prediction
-    cachePrediction(deviceId, analysis);
-
-    // Update device with latest prediction
-    await Device.updateOne(
+    await Device.findOneAndUpdate(
       { deviceId },
       {
-        healthScore: analysis.healthScore,
-        failureRisk: analysis.failureRisk,
+        healthScore: prediction.healthScore,
+        failureRisk: prediction.failureRisk,
         lastPrediction: {
           timestamp: new Date(),
-          healthScore: analysis.healthScore,
-          failureRisk: analysis.failureRisk,
-          reason: analysis.reason,
+          reason: prediction.reason,
+          status: prediction.status,
+          componentScores: prediction.componentScores,
         },
         lastUpdate: new Date(),
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
-
-    return analysis;
+    return true;
   } catch (error) {
-    console.error('✗ Prediction generation error:', error.message);
-
-    // Return fallback prediction
-    return {
-      healthScore: 70,
-      failureRisk: 'MEDIUM',
-      reason: 'Unable to generate prediction - check API and data',
-    };
-  }
-};
-
-export const predictMultipleDevices = async (deviceIds) => {
-  try {
-    const predictions = await Promise.all(
-      deviceIds.map((deviceId) => generateHealthPrediction(deviceId))
-    );
-
-    return predictions.filter((p) => p !== null);
-  } catch (error) {
-    console.error('✗ Batch prediction error:', error.message);
-    throw error;
-  }
-};
-
-export const getDeviceHealthTrend = async (deviceId, timeRangeMinutes = 60) => {
-  try {
-    const since = new Date(Date.now() - timeRangeMinutes * 60 * 1000);
-
-    // Get all devices for trend analysis
-    const readings = await SensorData.aggregate([
-      {
-        $match: {
-          deviceId,
-          timestamp: { $gte: since },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: {
-              format: '%Y-%m-%dT%H:%M:00Z',
-              date: '$timestamp',
-            },
-          },
-          avgTemperature: { $avg: '$temperature' },
-          avgVibration: { $avg: '$vibration' },
-          avgPressure: { $avg: '$pressure' },
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $sort: { _id: 1 },
-      },
-    ]);
-
-    return readings;
-  } catch (error) {
-    console.error('✗ Health trend error:', error.message);
-    throw error;
-  }
-};
-
-export const detectAnomalies = async (deviceId, threshold = 2.5) => {
-  try {
-    const recentData = await getRecentSensorData(deviceId, 30);
-
-    if (recentData.length < 5) {
-      return [];
-    }
-
-    const stats = await calculateAggregateStats(deviceId, 30);
-
-    const anomalies = recentData.filter((reading) => {
-      const tempDiff = Math.abs(reading.temperature - (stats?.avgTemperature || 0));
-      const vibrationDiff = Math.abs(reading.vibration - (stats?.avgVibration || 0));
-      const pressureDiff = Math.abs(reading.pressure - (stats?.avgPressure || 0));
-
-      const tempStdDev = stats?.avgTemperature ? tempDiff / (stats.avgTemperature * 0.1) : 0;
-      const vibrationStdDev = stats?.avgVibration ? vibrationDiff / (stats.avgVibration * 0.1) : 0;
-      const pressureStdDev = stats?.avgPressure ? pressureDiff / (stats.avgPressure * 0.1) : 0;
-
-      return tempStdDev > threshold || vibrationStdDev > threshold || pressureStdDev > threshold;
-    });
-
-    return anomalies;
-  } catch (error) {
-    console.error('✗ Anomaly detection error:', error.message);
-    throw error;
+    console.error(`✗ Database update error:`, error.message);
+    return false;
   }
 };
