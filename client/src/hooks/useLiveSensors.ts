@@ -1,6 +1,5 @@
-// Hook for managing live sensor data streaming from Socket.IO
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { onSensorUpdate } from '../services/socket';
+import { useEffect, useState, useCallback, useRef } from "react";
+import { onSensorUpdate } from "../services/socket";
 
 export interface LiveSensorReading {
   timestamp: string;
@@ -16,30 +15,27 @@ interface UseLiveSensorsOptions {
 
 export const useLiveSensors = (options: UseLiveSensorsOptions = {}) => {
   const { maxDataPoints = 100, deviceFilter } = options;
-  
+
   const [sensorData, setSensorData] = useState<
     Record<string, LiveSensorReading[]>
   >({});
-  
+
   const [lastUpdateTimestamp, setLastUpdateTimestamp] = useState<
     Record<string, string>
   >({});
-  
+
   const [isConnected, setIsConnected] = useState(false);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   const addSensorReading = useCallback(
-    (
-      deviceId: string,
-      reading: LiveSensorReading
-    ) => {
+    (deviceId: string, reading: LiveSensorReading) => {
       if (deviceFilter && !deviceFilter.includes(deviceId)) {
         return;
       }
 
       setSensorData((prevData) => {
         const deviceReadings = prevData[deviceId] || [];
-        
+
         const updatedReadings = [...deviceReadings, reading];
         if (updatedReadings.length > maxDataPoints) {
           updatedReadings.shift();
@@ -75,7 +71,7 @@ export const useLiveSensors = (options: UseLiveSensorsOptions = {}) => {
         setIsConnected(true);
       });
     } catch (error) {
-      console.error('Failed to subscribe to sensor updates:', error);
+      console.error("Failed to subscribe to sensor updates:", error);
       setIsConnected(false);
     }
 

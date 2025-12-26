@@ -1,12 +1,19 @@
-// Sensor data persistence and caching
+// Sensor data persistence with batch processing
 import SensorData from '../models/SensorData.model.js';
 import Device from '../models/Device.model.js';
+import Alert from '../models/Alert.model.js';
 import { ensureDeviceExists } from './device.service.js';
-import { emitSensorUpdate, getIO } from '../sockets/realtime.socket.js';
+import { emitSensorUpdate, emitAlert, getIO } from '../sockets/realtime.socket.js';
 
 const predictionCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 
+// Batch processing queue
+const sensorBatchQueue = new Map(); // deviceId -> array of readings
+const BATCH_SIZE = 10; // Process every 10 readings
+const BATCH_TIMEOUT = 30000; // Or every 30 seconds
+
+// Process and save batched sensor data
 export const saveSensorData = async (sensorPayload) => {
   try {
     const { deviceId, temperature, vibration, pressure, timestamp } = sensorPayload;
@@ -15,10 +22,18 @@ export const saveSensorData = async (sensorPayload) => {
       throw new Error('Invalid sensor payload: missing required fields');
     }
 
+    // Auto-register device
     await ensureDeviceExists(deviceId);
 
-    // Save to MongoDB time-series collection
-    const sensorData = new SensorData({
+    // Add to batch queue
+    if (!sensorBatchQueue.has(deviceId)) {
+      sensorBatchQueue.set(deviceId, []);
+      // Schedule batch processing after timeout
+      setTimeout(() => processBatch(deviceId), BATCH_TIMEOUT);
+    }
+
+    const batch = sensorBatchQueue.get(deviceId);
+    batch.push({
       deviceId,
       temperature,
       vibration: vibration * 100,
@@ -26,10 +41,39 @@ export const saveSensorData = async (sensorPayload) => {
       timestamp: timestamp ? new Date(timestamp) : new Date(),
     });
 
-    await sensorData.save();
+    // Emit to frontend immediately (for real-time display)
+    emitSensorUpdate(deviceId, {
+      temperature,
+      vibration: vibration * 100,
+      pressure,
+      timestamp: new Date().toISOString(),
+    });
 
-    // Format and log timestamp
-    const savedTime = sensorData.timestamp.toLocaleString('en-US', {
+    // Process batch if size reached
+    if (batch.length >= BATCH_SIZE) {
+      await processBatch(deviceId);
+    }
+
+    return { queued: true, batchSize: batch.length };
+  } catch (error) {
+    console.error('✗ Batch queue error:', error.message);
+    throw error;
+  }
+};
+
+// Process batch of sensor data (bulk insert)
+export const processBatch = async (deviceId) => {
+  try {
+    if (!sensorBatchQueue.has(deviceId)) return;
+
+    const batch = sensorBatchQueue.get(deviceId);
+    if (batch.length === 0) return;
+
+    // Bulk insert to MongoDB
+    const saved = await SensorData.insertMany(batch);
+
+    // Format batch log with timestamp
+    const batchTime = new Date().toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -38,7 +82,7 @@ export const saveSensorData = async (sensorPayload) => {
       hour12: true,
     });
 
-    console.log(`✓ [${savedTime}] Stored sensor data: ${deviceId} | Temp: ${temperature}°C | Vibration: ${(vibration * 100).toFixed(1)} | Pressure: ${pressure} bar`);
+    console.log(`✓ [${batchTime}] Batch processed: ${deviceId} | ${batch.length} records saved`);
 
     // Update device's last update timestamp
     await Device.updateOne(
@@ -47,17 +91,27 @@ export const saveSensorData = async (sensorPayload) => {
       { upsert: true }
     );
 
-    emitSensorUpdate(deviceId, {
-      temperature,
-      vibration: vibration * 100,
-      pressure,
-      timestamp: sensorData.timestamp.toISOString(),
-    });
+    // Clear processed batch
+    sensorBatchQueue.delete(deviceId);
 
-    return sensorData;
+    return saved;
   } catch (error) {
-    console.error('✗ Error saving sensor data:', error.message);
+    console.error(`✗ Batch processing error for ${deviceId}:`, error.message);
     throw error;
+  }
+};
+
+// Flush all pending batches (for graceful shutdown)
+export const flushAllBatches = async () => {
+  try {
+    const promises = [];
+    for (const deviceId of sensorBatchQueue.keys()) {
+      promises.push(processBatch(deviceId));
+    }
+    await Promise.all(promises);
+    console.log(`✓ All batches flushed on shutdown`);
+  } catch (error) {
+    console.error('✗ Flush error:', error.message);
   }
 };
 

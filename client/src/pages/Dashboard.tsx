@@ -307,7 +307,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onDeviceSelect }) => {
                           : 'text-red-600'
                       }`}
                     >
-                      {device.healthScore}%
+                      {(device.healthScore || 0).toFixed(2)}%
                     </span>
                   </div>
 
@@ -374,7 +374,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onDeviceSelect }) => {
 
             {/* Sensor Charts */}
             <div>
-              <h3 className="text-xl font-bold text-slate-900 mb-4">📊 Live Sensor Data</h3>
+              <h3 className="text-xl font-bold text-slate-900 mb-4">Live Sensor Data</h3>
               <SensorChart
                 deviceId={selectedDevice.deviceId}
                 title={`${selectedDevice.name} - Real-time Sensors`}
@@ -384,7 +384,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onDeviceSelect }) => {
             {/* Device Alerts */}
             {selectedDeviceAlerts.length > 0 && (
               <div>
-                <h3 className="text-xl font-bold text-slate-900 mb-4">🚨 Device Alerts</h3>
+                <h3 className="text-xl font-bold text-slate-900 mb-4">Device Alerts</h3>
                 <AlertsPanel
                   alerts={selectedDeviceAlerts}
                   loading={false}

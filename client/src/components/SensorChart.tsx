@@ -1,5 +1,4 @@
-// Real-time sensor data chart component
-import React, { useMemo, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AreaChart,
   Area,
@@ -31,7 +30,6 @@ export const SensorChart: React.FC<SensorChartProps> = ({
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
 
-  // Load sensor data every 10 seconds
   useEffect(() => {
     const loadData = async () => {
       try {
