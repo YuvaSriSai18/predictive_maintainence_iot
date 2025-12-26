@@ -1,7 +1,7 @@
 // Sensor data retrieval routes
 import express from 'express';
 import SensorData from '../models/SensorData.model.js';
-import { getRecentSensorData, calculateAggregateStats } from '../services/ingestion.service.js';
+import { getRecentSensorData, calculateAggregateStats, saveSensorData } from '../services/ingestion.service.js';
 
 const router = express.Router();
 
@@ -98,15 +98,13 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const sensorData = new SensorData({
+    const sensorData = await saveSensorData({
       deviceId,
       temperature,
       vibration,
       pressure,
-      timestamp: timestamp ? new Date(timestamp) : new Date(),
+      timestamp,
     });
-
-    await sensorData.save();
 
     res.status(201).json({
       success: true,

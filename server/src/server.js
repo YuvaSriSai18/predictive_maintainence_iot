@@ -10,6 +10,8 @@ import alertRoutes from "./routes/alert.routes.js";
 import { initializeSocket } from "./sockets/realtime.socket.js";
 import { connectMQTT, disconnectMQTT } from "./config/mqtt.js";
 import { saveSensorData } from "./services/ingestion.service.js";
+import { calculateHealthScore } from "./services/prediction.service.js";
+import Device from "./models/Device.model.js";
 
 const PORT = process.env.PORT || 3000;
 
@@ -148,6 +150,26 @@ const startServer = async () => {
         }`
       );
       console.log("\n✓ Backend ready to receive MQTT + REST + WebSockets\n");
+
+      // Periodic job: Update health scores every 10 seconds
+      setInterval(async () => {
+        try {
+          const devices = await Device.find().select('deviceId');
+          for (const device of devices) {
+            const { healthScore, failureRisk } = await calculateHealthScore(device.deviceId);
+            await Device.updateOne(
+              { deviceId: device.deviceId },
+              {
+                healthScore,
+                failureRisk,
+                lastUpdate: new Date(),
+              }
+            );
+          }
+        } catch (error) {
+          console.error('✗ Error updating device health scores:', error.message);
+        }
+      }, 10000); // Every 10 seconds
     });
   } catch (error) {
     console.error("✗ Failed to start server:", error.message);

@@ -2,6 +2,7 @@
 import SensorData from '../models/SensorData.model.js';
 import Device from '../models/Device.model.js';
 import { ensureDeviceExists } from './device.service.js';
+import { emitSensorUpdate, getIO } from '../sockets/realtime.socket.js';
 
 const predictionCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
@@ -20,12 +21,24 @@ export const saveSensorData = async (sensorPayload) => {
     const sensorData = new SensorData({
       deviceId,
       temperature,
-      vibration,
+      vibration: vibration * 100,
       pressure,
       timestamp: timestamp ? new Date(timestamp) : new Date(),
     });
 
     await sensorData.save();
+
+    // Format and log timestamp
+    const savedTime = sensorData.timestamp.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+
+    console.log(`✓ [${savedTime}] Stored sensor data: ${deviceId} | Temp: ${temperature}°C | Vibration: ${(vibration * 100).toFixed(1)} | Pressure: ${pressure} bar`);
 
     // Update device's last update timestamp
     await Device.updateOne(
@@ -33,6 +46,13 @@ export const saveSensorData = async (sensorPayload) => {
       { lastUpdate: new Date() },
       { upsert: true }
     );
+
+    emitSensorUpdate(deviceId, {
+      temperature,
+      vibration: vibration * 100,
+      pressure,
+      timestamp: sensorData.timestamp.toISOString(),
+    });
 
     return sensorData;
   } catch (error) {

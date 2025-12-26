@@ -63,6 +63,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ onDeviceSelect }) => {
   useEffect(() => {
     fetchDevices();
     fetchAlerts();
+
+    // Set up 10-second refresh for devices and alerts
+    const deviceInterval = setInterval(() => {
+      fetchDevices();
+    }, 10000); // Refresh devices every 10 seconds
+
+    const alertInterval = setInterval(() => {
+      fetchAlerts();
+    }, 10000); // Refresh alerts every 10 seconds
+
+    return () => {
+      clearInterval(deviceInterval);
+      clearInterval(alertInterval);
+    };
   }, [fetchDevices, fetchAlerts]);
 
   // Real-time sensor updates

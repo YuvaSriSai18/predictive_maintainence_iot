@@ -10,6 +10,46 @@ import {
   calculateAggregateStats,
 } from './ingestion.service.js';
 
+// Rule-based health score calculation (without AI)
+export const calculateHealthScore = async (deviceId) => {
+  try {
+    const recentData = await getRecentSensorData(deviceId, 10);
+    
+    if (!recentData || recentData.length === 0) {
+      return { healthScore: 100, failureRisk: 'LOW' };
+    }
+
+    const stats = await calculateAggregateStats(deviceId, 10);
+    
+    let healthScore = 100;
+    let failureRisk = 'LOW';
+
+    // Penalize high temperature (ideal: 70-80°C)
+    if (stats.avgTemperature > 85) healthScore -= (stats.avgTemperature - 85) * 2;
+    if (stats.maxTemperature > 95) healthScore -= 20;
+
+    // Penalize high vibration (ideal: < 30 in 0-100 scale)
+    if (stats.avgVibration > 40) healthScore -= (stats.avgVibration - 40) * 0.5;
+    if (stats.maxVibration > 50) healthScore -= 25;
+
+    // Penalize high pressure (ideal: 30-35)
+    if (stats.avgPressure > 40) healthScore -= (stats.avgPressure - 40) * 2;
+    if (stats.maxPressure > 45) healthScore -= 15;
+
+    // Determine failure risk based on health score
+    healthScore = Math.max(0, Math.min(100, healthScore));
+    
+    if (healthScore < 50) failureRisk = 'HIGH';
+    else if (healthScore < 70) failureRisk = 'MEDIUM';
+    else failureRisk = 'LOW';
+
+    return { healthScore, failureRisk };
+  } catch (error) {
+    console.error(`✗ Health calculation error for ${deviceId}:`, error.message);
+    return { healthScore: 100, failureRisk: 'LOW' };
+  }
+};
+
 export const generateHealthPrediction = async (deviceId) => {
   try {
     if (isPredictionCacheValid(deviceId)) {

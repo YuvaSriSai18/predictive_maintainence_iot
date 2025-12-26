@@ -1,8 +1,8 @@
 // Real-time sensor data chart component
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { useLiveSensors } from '../hooks/useLiveSensors';
+import { sensorAPI } from '../services/api';
 import {
   transformSensorDataForChart,
   formatTooltipTimestamp,
@@ -27,12 +27,39 @@ export const SensorChart: React.FC<SensorChartProps> = ({
   deviceId,
   title,
 }) => {
-  const { getDeviceSensors, isConnected } = useLiveSensors({ deviceFilter: [deviceId] });
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isLive, setIsLive] = useState(false);
 
-  const chartData = useMemo(() => {
-    const readings = getDeviceSensors(deviceId);
-    return transformSensorDataForChart(readings);
-  }, [getDeviceSensors, deviceId]);
+  // Load sensor data every 10 seconds
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const data = await sensorAPI.getByDevice(deviceId, '1h');
+        console.log(`✓ Loaded ${data.length} sensor readings for ${deviceId}`);
+        
+        if (data && data.length > 0) {
+          const transformed = transformSensorDataForChart(data);
+          setChartData(transformed);
+          setIsLive(true);
+        }
+      } catch (error) {
+        console.error('Failed to load sensor data:', error);
+        setIsLive(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Load immediately
+    loadData();
+
+    // Set up 10-second refresh interval
+    const interval = setInterval(loadData, 10000);
+
+    return () => clearInterval(interval);
+  }, [deviceId]);
 
   const CustomTooltip = (props: any) => {
     const { active, payload } = props;
@@ -63,19 +90,19 @@ export const SensorChart: React.FC<SensorChartProps> = ({
         </CardTitle>
         <div className="flex items-center gap-2">
           <div
-            className={`h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
+            className={`h-2 w-2 rounded-full ${isLive ? 'bg-green-500' : 'bg-red-500'}`}
           />
           <span className="text-xs text-slate-500">
-            {isConnected ? 'Live' : 'Connecting...'}
+            {isLive ? 'Live - Updating every 10s' : 'Connecting...'}
           </span>
         </div>
       </CardHeader>
       <CardContent>
-        {!isConnected && chartData.length === 0 ? (
+        {loading && chartData.length === 0 ? (
           <div className="flex h-96 items-center justify-center">
             <div className="text-center">
               <div className="mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-300 border-t-blue-600"></div>
-              <p className="text-sm text-slate-600">Connecting to live stream...</p>
+              <p className="text-sm text-slate-600">Loading sensor data...</p>
             </div>
           </div>
         ) : chartData.length === 0 ? (
@@ -84,10 +111,24 @@ export const SensorChart: React.FC<SensorChartProps> = ({
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={400}>
-            <LineChart
+            <AreaChart
               data={chartData}
               margin={{ top: 5, right: 30, left: 0, bottom: 5 }}
             >
+              <defs>
+                <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={CHART_COLORS.temperature} stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor={CHART_COLORS.temperature} stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="colorVib" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={CHART_COLORS.vibration} stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor={CHART_COLORS.vibration} stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="colorPress" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={CHART_COLORS.pressure} stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor={CHART_COLORS.pressure} stopOpacity={0}/>
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis
                 dataKey="time"
@@ -108,45 +149,44 @@ export const SensorChart: React.FC<SensorChartProps> = ({
                 label={{ value: 'Vibration / Pressure', angle: 90, position: 'insideRight' }}
               />
               <Tooltip content={<CustomTooltip />} />
-              <Legend
-                wrapperStyle={{ paddingTop: '20px' }}
-                iconType="line"
-              />
+              <Legend wrapperStyle={{ paddingTop: '20px' }} />
 
-              <Line
+              <Area
                 yAxisId="left"
                 type="monotone"
                 dataKey="temperature"
                 stroke={CHART_COLORS.temperature}
-                dot={false}
+                fillOpacity={1}
+                fill="url(#colorTemp)"
                 strokeWidth={2}
                 name="Temperature (°C)"
                 isAnimationActive={false}
               />
 
-              <Line
+              <Area
                 yAxisId="right"
                 type="monotone"
                 dataKey="vibration"
                 stroke={CHART_COLORS.vibration}
-                dot={false}
+                fillOpacity={1}
+                fill="url(#colorVib)"
                 strokeWidth={2}
                 name="Vibration (mm/s)"
                 isAnimationActive={false}
               />
 
-              {/* Pressure Line - Real-time streaming */}
-              <Line
+              <Area
                 yAxisId="right"
                 type="monotone"
                 dataKey="pressure"
                 stroke={CHART_COLORS.pressure}
-                dot={false}
+                fillOpacity={1}
+                fill="url(#colorPress)"
                 strokeWidth={2}
                 name="Pressure (bar)"
                 isAnimationActive={false}
               />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         )}
       </CardContent>
