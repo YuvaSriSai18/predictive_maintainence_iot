@@ -1,8 +1,6 @@
 // API service for device, sensor and alert endpoints
-const API_BASE_URL = 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URI || "http://localhost:3000/api";
 
-// API service for device, sensor and alert endpoints
-// Type definitions
 export interface Device {
   _id: string;
   deviceId: string;
