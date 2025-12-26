@@ -334,19 +334,19 @@ export const DeviceDetails: React.FC<DeviceDetailsProps> = ({
             <div>
               <p className="text-xs text-slate-600">Temperature Max</p>
               <p className="text-lg font-semibold text-slate-900">
-                {device?.alertThresholds?.temperature ?? device?.alertThresholds?.temperatureMax ?? 'N/A'}°C
+                {device?.alertThresholds?.temperatureMax ?? 'N/A'}°C
               </p>
             </div>
             <div>
               <p className="text-xs text-slate-600">Vibration Max</p>
               <p className="text-lg font-semibold text-slate-900">
-                {device?.alertThresholds?.vibration ?? device?.alertThresholds?.vibrationMax ?? 'N/A'}
+                {device?.alertThresholds?.vibrationMax ?? 'N/A'}
               </p>
             </div>
             <div>
               <p className="text-xs text-slate-600">Pressure Max</p>
               <p className="text-lg font-semibold text-slate-900">
-                {device?.alertThresholds?.pressure ?? device?.alertThresholds?.pressureMax ?? 'N/A'}
+                {device?.alertThresholds?.pressureMax ?? 'N/A'}
               </p>
             </div>
             <div>
