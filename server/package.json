@@ -1,0 +1,28 @@
+{
+  "name": "predictive-maintenance-backend",
+  "version": "1.0.0",
+  "description": "Predictive Maintenance Backend for IoT Devices",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "simulate": "node src/simulator/deviceSimulator.js",
+    "start:all": "concurrently \"npm start\" \"npm run simulate\""
+  },
+  "keywords": ["iot", "mqtt", "predictive-maintenance", "openai"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "mqtt": "^5.14.1",
+    "mongoose": "^8.0.0",
+    "socket.io": "^4.7.2",
+    "openai": "^4.24.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "concurrently": "^8.2.0"
+  }
+}
